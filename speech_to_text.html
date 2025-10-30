@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Recorder & AI Transcriber</title>
+    <!-- Load Tailwind CSS --><script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configure Tailwind to use Inter font and apply a dark mode aesthetic --><script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'primary-dark': '#1e293b',
+                        'secondary-dark': '#334155',
+                        'accent-green': '#10b981',
+                        'accent-red': '#ef4444',
+                        'accent-blue': '#3b82f6', /* New color for LLM features */
+                        'accent-purple': '#a855f7', /* New color for edit button */
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom styles for better aesthetics */
+        body {
+            background-color: #0f172a; /* Dark background */
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+        }
+        /* Style for the transcript area */
+        #transcript-output {
+            min-height: 150px; /* Reduced min-height, as it's now editable */
+            overflow-y: auto;
+            background-color: #1a222f; /* Slightly lighter background for editable area */
+            border: 1px solid #475569; /* Border to indicate editability */
+            padding: 1rem;
+            border-radius: 0.5rem;
+            color: #e2e8f0;
+            cursor: text;
+        }
+        /* Style for the interim transcript area (still separate) */
+        #interim-output {
+            display: block; /* Ensure interim is on its own line */
+            margin-top: 0.5rem;
+            font-size: 0.9em;
+        }
+
+        /* Custom loader spinner */
+        .loader {
+            border: 4px solid #3b82f644;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: none; /* Hidden by default */
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="text-white flex items-center justify-center p-4">
+
+    <div id="app-container" class="w-full max-w-4xl bg-primary-dark p-6 sm:p-8 rounded-2xl shadow-2xl border border-gray-700">
+        <h1 class="text-3xl font-extrabold text-center mb-6 text-accent-green tracking-tight">
+            🎙️ Voice Recorder & AI Assistant
+        </h1>
+
+        <!-- Status and Control Section --><div class="space-y-4 mb-8">
+            <button id="toggle-button" class="w-full py-4 text-xl font-bold rounded-xl transition duration-300 ease-in-out shadow-lg transform hover:scale-[1.01] focus:outline-none focus:ring-4 focus:ring-green-500/50">
+                Start Speaking
+            </button>
+
+            <!-- Status Message Box --><p id="status-message" class="text-center text-sm font-medium p-3 rounded-lg bg-secondary-dark border border-gray-600 text-gray-300">
+                Click "Start Speaking" to begin.
+            </p>
+        </div>
+
+        <!-- Transcript Output Section --><div class="bg-secondary-dark p-6 rounded-xl shadow-inner border border-gray-600 mb-6">
+            <h2 class="text-xl font-semibold mb-3 text-gray-200">Transcription:</h2>
+
+            <!-- Main Transcript (Final Results) - NOW EDITABLE --><div id="transcript-output" contenteditable="true" class="text-lg leading-relaxed font-normal whitespace-pre-wrap focus:outline-none focus:ring-2 focus:ring-accent-purple"></div>
+            
+            <!-- Interim Transcript (Real-time, temporary) --><span id="interim-output" class="font-light text-gray-400"></span>
+
+            <div class="flex flex-col sm:flex-row gap-3 mt-4">
+                <button id="clear-button" class="flex-1 py-2 text-sm font-semibold rounded-lg bg-gray-600 hover:bg-gray-700 transition duration-150 shadow-md">
+                    Clear Text
+                </button>
+                <button id="save-edits-button" class="flex-1 py-2 text-sm font-semibold rounded-lg bg-accent-purple hover:bg-purple-600 transition duration-150 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                    Save Edits
+                </button>
+            </div>
+        </div>
+
+        <!-- LLM Feature Buttons --><div class="mb-6 border-t border-gray-700 pt-6">
+            <h2 class="text-xl font-semibold mb-3 text-gray-200">AI Actions:</h2>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button id="summarize-button" class="flex-1 py-3 text-base font-semibold rounded-lg bg-accent-blue hover:bg-blue-600 transition duration-150 shadow-md focus:ring-4 focus:ring-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed">
+                    ✨ Summarize Transcript
+                </button>
+                <button id="keypoints-button" class="flex-1 py-3 text-base font-semibold rounded-lg bg-accent-blue hover:bg-blue-600 transition duration-150 shadow-md focus:ring-4 focus:ring-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed">
+                    ✨ Extract Key Points
+                </button>
+            </div>
+        </div>
+
+        <!-- LLM Output Section --><div id="llm-results-container" class="hidden bg-secondary-dark p-6 rounded-xl shadow-inner border border-gray-600">
+            <h2 class="text-xl font-semibold mb-3 text-gray-200 flex items-center gap-2">
+                <div id="llm-loader" class="loader"></div>
+                <span id="llm-title">AI Result</span>
+            </h2>
+            <div id="llm-output" class="text-lg leading-relaxed text-gray-100 whitespace-pre-wrap">
+                <!-- LLM content will be injected here --></div>
+        </div>
+        
+        <p class="text-xs text-center text-gray-500 mt-6">
+            Speech powered by the browser's Web Speech API. AI features powered by Gemini.
+        </p>
+
+    </div>
+
+    <script>
+        // --- Configuration and Constants ---
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const apiKey = ""; 
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+        // --- DOM Elements ---
+        const transcriptOutput = document.getElementById('transcript-output');
+        const interimOutput = document.getElementById('interim-output');
+        const statusMessage = document.getElementById('status-message');
+        const toggleButton = document.getElementById('toggle-button');
+        const clearButton = document.getElementById('clear-button');
+        const saveEditsButton = document.getElementById('save-edits-button'); // New button
+        const summarizeButton = document.getElementById('summarize-button');
+        const keypointsButton = document.getElementById('keypoints-button');
+        const llmResultsContainer = document.getElementById('llm-results-container');
+        const llmTitle = document.getElementById('llm-title');
+        const llmOutput = document.getElementById('llm-output');
+        const llmLoader = document.getElementById('llm-loader');
+
+
+        // --- State Variables ---
+        let recognition = null;
+        let listening = false;
+        let isProcessingLLM = false;
+        let originalTranscriptContent = ""; // To track changes for the save button
+
+
+        // --- Utility Functions ---
+
+        /**
+         * Sets the loading state for LLM features.
+         * @param {boolean} isLoading 
+         * @param {string} title 
+         */
+        function setLLMLoading(isLoading, title = "AI Result") {
+            isProcessingLLM = isLoading;
+            summarizeButton.disabled = isLoading;
+            keypointsButton.disabled = isLoading;
+            toggleButton.disabled = isLoading; // Prevent recording while LLM is running
+            saveEditsButton.disabled = isLoading || !hasTranscriptChanged(); // Also disable save edits
+            llmResultsContainer.classList.toggle('hidden', !isLoading && !llmOutput.textContent.trim());
+
+            if (isLoading) {
+                llmOutput.innerHTML = '';
+                llmTitle.textContent = title;
+                llmLoader.style.display = 'block';
+                llmResultsContainer.classList.remove('hidden');
+            } else {
+                llmLoader.style.display = 'none';
+            }
+        }
+
+        /**
+         * Checks if the current editable transcript content differs from the last saved state.
+         * @returns {boolean} True if content has changed, false otherwise.
+         */
+        function hasTranscriptChanged() {
+            return transcriptOutput.textContent.trim() !== originalTranscriptContent.trim();
+        }
+
+        /**
+         * Calls the Gemini API with exponential backoff for retries.
+         * @param {string} prompt The user prompt.
+         * @param {string} systemInstruction The system instruction for the model.
+         * @param {number} attempt Current retry attempt count.
+         * @returns {Promise<string>} The generated text result.
+         */
+        async function callGeminiAPI(prompt, systemInstruction, attempt = 0) {
+            const MAX_RETRIES = 3;
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+            };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    if (attempt < MAX_RETRIES && response.status === 429) {
+                        const delay = Math.pow(2, attempt) * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        return callGeminiAPI(prompt, systemInstruction, attempt + 1);
+                    }
+                    throw new Error(`API call failed with status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                
+                if (!text) {
+                     // Handle cases where the response structure is unexpected or content is missing
+                     throw new Error('LLM response was empty or malformed.');
+                }
+                
+                return text;
+
+            } catch (error) {
+                console.error('Gemini API Error:', error);
+                throw new Error(`Failed to process AI request after ${attempt + 1} attempts.`);
+            }
+        }
+
+
+        // --- Core Speech Recognition Functions ---
+
+        function initializeRecognition() {
+            if (!SpeechRecognition) return;
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-IN'; // Indian English language setting
+
+            recognition.onstart = () => {
+                listening = true;
+                updateUI();
+                statusMessage.textContent = '🟢 Listening... Speak clearly now.';
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+                
+                // Append final transcript to the editable area
+                transcriptOutput.textContent += finalTranscript;
+                originalTranscriptContent = transcriptOutput.textContent; // Update original content after a final result
+                interimOutput.textContent = interimTranscript;
+                updateUI(); // Update UI to reflect potential changes
+            };
+
+            recognition.onend = () => {
+                listening = false;
+                updateUI();
+                statusMessage.textContent = 'Microphone is off. Click Start to resume.';
+                interimOutput.textContent = '';
+            };
+
+            recognition.onerror = (event) => {
+                listening = false;
+                updateUI();
+                if (event.error === 'not-allowed') {
+                    statusMessage.textContent = '❌ Error: Microphone access denied. Please allow microphone in your browser settings.';
+                } else if (event.error === 'no-speech') {
+                    statusMessage.textContent = 'Microphone is off. No speech detected. Click Start to resume.';
+                } else {
+                    statusMessage.textContent = `❌ Error: ${event.error}. Click Start to try again.`;
+                }
+                console.error('Speech Recognition Error:', event.error);
+                interimOutput.textContent = '';
+            };
+        }
+
+        function toggleListening() {
+            if (!recognition || isProcessingLLM) return; // Prevent mic use while LLM is running
+
+            if (listening) {
+                recognition.stop();
+            } else {
+                try {
+                    // Clear previous LLM results before starting a new transcription
+                    llmOutput.innerHTML = '';
+                    llmResultsContainer.classList.add('hidden');
+                    
+                    recognition.start();
+                } catch (e) {
+                    console.error('Error starting recognition:', e);
+                    statusMessage.textContent = '⚠️ Could not start recognition. Check if another process is using the microphone.';
+                }
+            }
+        }
+
+        function updateUI() {
+            const hasContent = transcriptOutput.textContent.trim().length > 0;
+            const contentChanged = hasTranscriptChanged();
+
+            if (listening) {
+                toggleButton.textContent = 'Stop Listening';
+                toggleButton.classList.remove('bg-accent-green', 'hover:bg-green-600', 'shadow-green-500/50');
+                toggleButton.classList.add('bg-accent-red', 'hover:bg-red-500', 'shadow-red-500/50');
+            } else {
+                toggleButton.textContent = 'Start Speaking';
+                toggleButton.classList.remove('bg-accent-red', 'hover:bg-red-500', 'shadow-red-500/50');
+                toggleButton.classList.add('bg-accent-green', 'hover:bg-green-600', 'shadow-green-500/50');
+            }
+            
+            // Enable/disable LLM buttons based on transcript content and LLM processing state
+            summarizeButton.disabled = !hasContent || isProcessingLLM;
+            keypointsButton.disabled = !hasContent || isProcessingLLM;
+            
+            // Enable/disable Save Edits button
+            saveEditsButton.disabled = !contentChanged || isProcessingLLM;
+        }
+
+        function clearTranscript() {
+            transcriptOutput.textContent = '';
+            originalTranscriptContent = ''; // Reset original content too
+            interimOutput.textContent = '';
+            llmOutput.innerHTML = '';
+            llmResultsContainer.classList.add('hidden');
+            statusMessage.textContent = 'Transcript cleared. Ready to start again.';
+            updateUI(); // Update button state
+        }
+
+        function saveEdits() {
+            originalTranscriptContent = transcriptOutput.textContent.trim();
+            statusMessage.textContent = 'Edits saved!';
+            updateUI(); // Disable the save button after saving
+        }
+
+
+        // --- LLM Action Functions ---
+
+        async function summarizeTranscript() {
+            // Always use the current content from the editable div
+            const text = transcriptOutput.textContent.trim();
+            if (!text) {
+                llmOutput.innerHTML = '<p class="text-red-400">Please record some text before summarizing.</p>';
+                llmResultsContainer.classList.remove('hidden');
+                return;
+            }
+
+            setLLMLoading(true, 'Generating Summary...');
+
+            const systemPrompt = "You are a helpful text summarization assistant. Summarize the following text concisely in one paragraph.";
+            
+            try {
+                const result = await callGeminiAPI(text, systemPrompt);
+                llmOutput.innerHTML = `<p class="font-normal">${result}</p>`;
+            } catch (error) {
+                llmOutput.innerHTML = `<p class="text-red-400">${error.message}</p>`;
+            } finally {
+                setLLMLoading(false);
+                updateUI();
+            }
+        }
+
+        async function extractKeyPoints() {
+            // Always use the current content from the editable div
+            const text = transcriptOutput.textContent.trim();
+            if (!text) {
+                llmOutput.innerHTML = '<p class="text-red-400">Please record some text before extracting key points.</p>';
+                llmResultsContainer.classList.remove('hidden');
+                return;
+            }
+
+            setLLMLoading(true, 'Extracting Key Points...');
+
+            const systemPrompt = "You are an AI assistant specialized in extracting structured data. Analyze the following text and return a list of the 5 most important key points or action items. Return the response as a numbered HTML list (<ol><li>...</li></ol>) to be displayed directly.";
+            
+            try {
+                const result = await callGeminiAPI(text, systemPrompt);
+                llmOutput.innerHTML = result; // Assuming Gemini returns the structured HTML list
+            } catch (error) {
+                llmOutput.innerHTML = `<p class="text-red-400">${error.message}</p>`;
+            } finally {
+                setLLMLoading(false);
+                updateUI();
+            }
+        }
+
+        // --- Initial Setup and Event Listeners ---
+        window.onload = () => {
+            if (!SpeechRecognition) {
+                statusMessage.textContent = '❌ Speech Recognition is not supported in this browser. Please use a modern browser like Chrome, Edge, or Firefox.';
+                toggleButton.disabled = true;
+                toggleButton.textContent = 'Unsupported Browser';
+                toggleButton.classList.remove('bg-accent-green');
+                toggleButton.classList.add('bg-gray-400', 'cursor-not-allowed');
+                clearButton.disabled = true;
+                saveEditsButton.disabled = true;
+            } else {
+                initializeRecognition();
+                
+                // Attach event listeners
+                toggleButton.addEventListener('click', toggleListening);
+                clearButton.addEventListener('click', clearTranscript);
+                saveEditsButton.addEventListener('click', saveEdits); // New event listener for save edits
+                summarizeButton.addEventListener('click', summarizeTranscript);
+                keypointsButton.addEventListener('click', extractKeyPoints);
+                
+                // Monitor the editable div for input changes
+                transcriptOutput.addEventListener('input', updateUI); 
+
+                // Set initial UI state
+                updateUI();
+
+                // Initialize originalTranscriptContent
+                originalTranscriptContent = transcriptOutput.textContent;
+            }
+        };
+    </script>
+</body>
+</html>
