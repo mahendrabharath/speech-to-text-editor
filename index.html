@@ -403,32 +403,34 @@
         // --- Initial Setup and Event Listeners ---
         window.onload = () => {
             if (!SpeechRecognition) {
-                statusMessage.textContent = '❌ Speech Recognition is not supported in this browser. Please use a modern browser like Chrome, Edge, or Firefox.';
+                // If SpeechRecognition is missing (like in Safari/iOS)
+                statusMessage.textContent = '❌ The voice recording feature is not supported in this browser (e.g., Safari/iOS). You can still manually type or paste text into the Transcription box and use the AI Actions (Summarize/Key Points) below.';
+                
                 toggleButton.disabled = true;
-                toggleButton.textContent = 'Unsupported Browser';
+                toggleButton.textContent = 'Recording Unavailable';
                 toggleButton.classList.remove('bg-accent-green');
                 toggleButton.classList.add('bg-gray-400', 'cursor-not-allowed');
-                clearButton.disabled = true;
-                saveEditsButton.disabled = true;
+                
+                // Do NOT disable the clear, save, or AI buttons, to maintain partial functionality
             } else {
                 initializeRecognition();
-                
-                // Attach event listeners
-                toggleButton.addEventListener('click', toggleListening);
-                clearButton.addEventListener('click', clearTranscript);
-                saveEditsButton.addEventListener('click', saveEdits); // New event listener for save edits
-                summarizeButton.addEventListener('click', summarizeTranscript);
-                keypointsButton.addEventListener('click', extractKeyPoints);
-                
-                // Monitor the editable div for input changes
-                transcriptOutput.addEventListener('input', updateUI); 
-
-                // Set initial UI state
-                updateUI();
-
-                // Initialize originalTranscriptContent
-                originalTranscriptContent = transcriptOutput.textContent;
             }
+            
+            // These event listeners work regardless of SpeechRecognition support
+            toggleButton.addEventListener('click', toggleListening);
+            clearButton.addEventListener('click', clearTranscript);
+            saveEditsButton.addEventListener('click', saveEdits); 
+            summarizeButton.addEventListener('click', summarizeTranscript);
+            keypointsButton.addEventListener('click', extractKeyPoints);
+            
+            // Monitor the editable div for input changes
+            transcriptOutput.addEventListener('input', updateUI); 
+
+            // Set initial UI state
+            updateUI();
+
+            // Initialize originalTranscriptContent
+            originalTranscriptContent = transcriptOutput.textContent;
         };
     </script>
 </body>
